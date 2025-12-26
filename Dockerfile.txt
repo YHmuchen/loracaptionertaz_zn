@@ -1,0 +1,22 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package.json first to ensure it exists for npm install
+COPY package.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy the rest of the application code
+COPY . .
+
+# Build the React application
+# This will use the API_KEY environment variable if provided during build
+RUN npm run build
+
+# Expose port 7860 (Required by Hugging Face Spaces)
+EXPOSE 7860
+
+# Start the Vite preview server
+CMD ["npm", "run", "preview"]

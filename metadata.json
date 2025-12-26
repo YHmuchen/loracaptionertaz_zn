@@ -1,0 +1,7 @@
+{
+  "name": "LoRA Caption Assistant",
+  "description": "High-quality image/video captioning for Wan 2.2 LoRAs using Gemini 3 Pro.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
