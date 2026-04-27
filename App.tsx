@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { MediaFile } from './types';
 import { GenerationStatus } from './types';
@@ -5,12 +6,14 @@ import FileUploader from './components/FileUploader';
 import MediaItem from './components/MediaItem';
 import { generateCaption, refineCaption, checkCaptionQuality } from './services/geminiService';
 import { generateCaptionQwen, refineCaptionQwen, checkQualityQwen } from './services/qwenService';
+import { generateCaptionGrok, refineCaptionGrok, checkQualityGrok } from './services/grokService';
+import { generateCaptionOpenRouter, refineCaptionOpenRouter, checkQualityOpenRouter } from './services/openRouterService';
 import { sendComfyPrompt } from './services/comfyService';
 import { DownloadIcon, SparklesIcon, WandIcon, LoaderIcon, CopyIcon, UploadCloudIcon, XIcon, CheckCircleIcon, AlertTriangleIcon, StopIcon, TrashIcon } from './components/Icons';
 import { DEFAULT_COMFY_WORKFLOW } from './constants/defaultWorkflow';
 
 declare const process: {
-  env: { API_KEY?: string; [key: string]: string | undefined; }
+  env: { GEMINI_API_KEY?: string; [key: string]: string | undefined; }
 };
 
 declare global {
@@ -21,14 +24,15 @@ declare global {
   interface Window { JSZip: any; aistudio?: AIStudio; }
 }
 
-type ApiProvider = 'gemini' | 'qwen';
+type ApiProvider = 'gemini' | 'qwen' | 'grok' | 'openrouter';
 type OSType = 'windows' | 'linux';
 
 const GEMINI_MODELS = [
-    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (High Quality)' },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (High Quality)' },
     { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Fast)' },
-    { id: 'gemini-2.5-pro-preview-09-2025', name: 'Gemini 2.5 Pro (Multimodal)' },
-    { id: 'gemini-2.5-flash-native-audio-preview-09-2025', name: 'Gemini 2.5 Flash (Multimedia Speed)' }
+    { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite' },
+    { id: 'gemini-3.1-flash-live-preview', name: 'Gemini 3.1 Flash Live (Native Audio/Video)' },
+    { id: 'gemini-flash-latest', name: 'Gemini Flash Latest' }
 ];
 
 const QWEN_MODELS = [
@@ -37,17 +41,49 @@ const QWEN_MODELS = [
     { id: 'Qwen/Qwen3-VL-8B-Instruct-FP8', name: 'Qwen 3 VL 8B FP8' },
 ];
 
+const GROK_MODELS = [
+    { id: 'grok-4-1-fast-reasoning', name: 'Grok 4-1 Fast Reasoning' },
+    { id: 'grok-4-1-fast-non-reasoning', name: 'Grok 4-1 Fast Non-Reasoning' },
+    { id: 'grok-4-fast-reasoning', name: 'Grok 4 Fast Reasoning' },
+    { id: 'grok-4-fast-non-reasoning', name: 'Grok 4 Fast Non-Reasoning' },
+    { id: 'grok-3-vision-preview', name: 'Grok 3 Vision (Latest Preview)' },
+    { id: 'grok-2-vision-1212', name: 'Grok 2 Vision (12-12)' },
+    { id: 'grok-2-vision', name: 'Grok 2 Vision (Alias)' },
+    { id: 'grok-vision-beta', name: 'Grok Vision Beta' },
+    { id: 'grok-imagine-video', name: 'Grok Imagine Video' }
+];
+
+const OPENROUTER_MODELS = [
+    { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini' },
+    { id: 'openai/gpt-4o', name: 'GPT-4o' },
+    { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
+    { id: 'qwen/qwen-2-vl-72b-instruct', name: 'Qwen 2 VL 72B' },
+    { id: 'qwen/qwen-2-vl-7b-instruct', name: 'Qwen 2 VL 7B' },
+    { id: 'qwen/qwen3.5-35b-a3b-20260224', name: 'Qwen 3.5 35B (Reasoning)' },
+];
+
 const DEFAULT_BULK_INSTRUCTIONS = `Dont use ambiguous language "perhaps" for example. Describe EVERYTHING visible: characters, clothing, actions, background, objects, lighting, and camera angle. Refrain from using generic phrases like "character, male, figure of" and use specific terminology: "woman, girl, boy, man". Do not mention the art style.`;
 const DEFAULT_REFINEMENT_INSTRUCTIONS = `Refine the caption to be more descriptive and cinematic. Ensure all colors and materials are mentioned.`;
 
 const App: React.FC = () => {
   // --- STATE ---
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [triggerWord, setTriggerWord] = useState<string>('MyStyle');
   const [apiProvider, setApiProvider] = useState<ApiProvider>('gemini');
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(process.env.API_KEY || '');
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(process.env.GEMINI_API_KEY || '');
   const [geminiModel, setGeminiModel] = useState<string>(GEMINI_MODELS[0].id);
-  const [hasSelectedKey, setHasSelectedKey] = useState<boolean>(false);
+
+  // xAI Grok Options
+  const [grokApiKey, setGrokApiKey] = useState<string>('');
+  const [grokModel, setGrokModel] = useState<string>(GROK_MODELS[0].id);
+
+  // OpenRouter Options
+  const [openRouterApiKey, setOpenRouterApiKey] = useState<string>('');
+  const [openRouterModel, setOpenRouterModel] = useState<string>(OPENROUTER_MODELS[0].id);
+  const [openRouterMaxTokens, setOpenRouterMaxTokens] = useState<number>(4096);
+  const [openRouterTemperature, setOpenRouterTemperature] = useState<number>(0.7);
+  const [openRouterUseFullVideo, setOpenRouterUseFullVideo] = useState<boolean>(false);
 
   // Qwen Options
   const [qwenEndpoint, setQwenEndpoint] = useState<string>('');
@@ -59,7 +95,7 @@ const App: React.FC = () => {
   const [qwenMaxTokens, setQwenMaxTokens] = useState<number>(8192);
   const [qwen8Bit, setQwen8Bit] = useState<boolean>(false);
   const [qwenEager, setQwenEager] = useState<boolean>(false);
-  const [qwenVideoFrameCount, setQwenVideoFrameCount] = useState<number>(8);
+  const [qwenVideoFrameCount] = useState<number>(8);
   
   // Offline Local Snapshot Options
   const [useOfflineSnapshot, setUseOfflineSnapshot] = useState<boolean>(false);
@@ -79,7 +115,7 @@ const App: React.FC = () => {
   const [useSecureBridge, setUseSecureBridge] = useState<boolean>(false);
   const [isFirstTimeBridge, setIsFirstTimeBridge] = useState<boolean>(false);
   const [bridgeOsType, setBridgeOsType] = useState<OSType>(() => navigator.userAgent.includes("Windows") ? 'windows' : 'linux');
-  const [bridgeInstallPath, setBridgeInstallPath] = useState<string>('/mnt/Goon/captioner');
+  const [bridgeInstallPath, setBridgeInstallPath] = useState<string>(() => navigator.userAgent.includes("Windows") ? 'C:\\AI\\bridge' : '/home/user/ai/bridge');
 
   // Queue and Performance
   const [useRequestQueue, setUseRequestQueue] = useState<boolean>(true);
@@ -100,9 +136,6 @@ const App: React.FC = () => {
 
   // --- EFFECTS ---
   useEffect(() => {
-    if (window.aistudio) {
-        window.aistudio.hasSelectedApiKey().then(setHasSelectedKey);
-    }
     const isHttps = window.location.protocol === 'https:';
     if (!qwenEndpoint) {
         setQwenEndpoint(isHttps ? '' : 'http://localhost:8000/v1');
@@ -124,8 +157,10 @@ const App: React.FC = () => {
   // --- MEMOIZED VALUES ---
   const hasValidConfig = useMemo(() => {
     if (apiProvider === 'gemini') return !!geminiApiKey;
+    if (apiProvider === 'grok') return !!grokApiKey;
+    if (apiProvider === 'openrouter') return !!openRouterApiKey;
     return qwenEndpoint !== '';
-  }, [apiProvider, geminiApiKey, qwenEndpoint]);
+  }, [apiProvider, geminiApiKey, grokApiKey, openRouterApiKey, qwenEndpoint]);
 
   const selectedFiles = useMemo(() => {
     return (mediaFiles || []).filter(mf => mf.isSelected);
@@ -175,34 +210,47 @@ const App: React.FC = () => {
         : `cd "${path}" && ${isFirstTimeBridge ? `${setupCmd} && ` : ''}${activateCmd} && python3 bridge.py`;
   }, [bridgeInstallPath, bridgeOsType, isFirstTimeBridge]);
 
-  const isTunnelRequired = useMemo(() => {
-    return window.location.protocol === 'https:' && (qwenEndpoint.includes('localhost') || qwenEndpoint.includes('127.0.0.1'));
-  }, [qwenEndpoint]);
-
   // --- HANDLERS ---
-  const handleSelectApiKey = async () => {
-    if (window.aistudio) {
-      await window.aistudio.openSelectKey();
-      setHasSelectedKey(true);
-    }
-  };
-
   const updateFile = useCallback((id: string, updates: Partial<MediaFile>) => {
     setMediaFiles(prev => (prev || []).map(mf => (mf.id === id ? { ...mf, ...updates } : mf)));
   }, []);
 
   const handleFilesAdded = useCallback(async (files: File[]) => {
-    const mediaUploads = files.filter(file => file.type.startsWith('image/') || file.type.startsWith('video/'));
-    const newMediaFiles = await Promise.all(mediaUploads.map(async (file) => ({
-      id: `${file.name}-${Math.random()}`,
-      file,
-      previewUrl: URL.createObjectURL(file),
-      caption: '',
-      status: GenerationStatus.IDLE,
-      isSelected: false,
-      customInstructions: '',
-      comfyStatus: 'idle'
-    } as MediaFile)));
+    const mediaFilesList = files.filter(file => file.type.startsWith('image/') || file.type.startsWith('video/'));
+    const textFilesList = files.filter(file => file.name.toLowerCase().endsWith('.txt'));
+
+    // Create a map of filename (no extension) to the text file object for quick lookup
+    const textFilesMap = new Map<string, File>();
+    textFilesList.forEach(f => {
+      const baseName = f.name.substring(0, f.name.lastIndexOf('.'));
+      textFilesMap.set(baseName.toLowerCase(), f);
+    });
+
+    const newMediaFiles = await Promise.all(mediaFilesList.map(async (file) => {
+      const baseName = file.name.substring(0, file.name.lastIndexOf('.'));
+      let initialCaption = '';
+      
+      const matchedTxtFile = textFilesMap.get(baseName.toLowerCase());
+      if (matchedTxtFile) {
+        try {
+          initialCaption = await matchedTxtFile.text();
+        } catch (e) {
+          console.error(`Failed to read caption for ${file.name}`, e);
+        }
+      }
+
+      return {
+        id: `${file.name}-${Math.random()}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        caption: initialCaption.trim(),
+        status: GenerationStatus.IDLE,
+        isSelected: false,
+        customInstructions: '',
+        comfyStatus: 'idle'
+      } as MediaFile;
+    }));
+
     setMediaFiles(prev => [...(prev || []), ...newMediaFiles]);
   }, []);
 
@@ -213,9 +261,16 @@ const App: React.FC = () => {
     updateFile(id, { status: GenerationStatus.CHECKING, errorMessage: undefined });
 
     try {
-        const score = apiProvider === 'gemini'
-            ? await checkCaptionQuality(fileToProcess.file, fileToProcess.caption, abortControllerRef.current.signal, geminiApiKey, geminiModel)
-            : await checkQualityQwen('', qwenEndpoint, qwenEffectiveModel, fileToProcess.file, fileToProcess.caption, qwenVideoFrameCount, abortControllerRef.current.signal);
+        let score = 0;
+        if (apiProvider === 'gemini') {
+            score = await checkCaptionQuality(fileToProcess.file, fileToProcess.caption, abortControllerRef.current.signal, geminiApiKey, geminiModel);
+        } else if (apiProvider === 'grok') {
+            score = await checkQualityGrok(grokApiKey, grokModel, fileToProcess.file, fileToProcess.caption, qwenVideoFrameCount, abortControllerRef.current.signal);
+        } else if (apiProvider === 'openrouter') {
+            score = await checkQualityOpenRouter(openRouterApiKey, openRouterModel, fileToProcess.file, fileToProcess.caption, qwenVideoFrameCount, openRouterTemperature, openRouterUseFullVideo, abortControllerRef.current.signal);
+        } else {
+            score = await checkQualityQwen('', qwenEndpoint, qwenEffectiveModel, fileToProcess.file, fileToProcess.caption, qwenVideoFrameCount, abortControllerRef.current.signal);
+        }
         
         updateFile(id, { qualityScore: score, status: GenerationStatus.SUCCESS });
     } catch (err: any) {
@@ -225,7 +280,29 @@ const App: React.FC = () => {
             updateFile(id, { status: GenerationStatus.ERROR, errorMessage: err.message });
         }
     }
-  }, [mediaFiles, apiProvider, qwenEndpoint, qwenEffectiveModel, qwenVideoFrameCount, hasValidConfig, updateFile, geminiApiKey, geminiModel]);
+  }, [mediaFiles, apiProvider, qwenEndpoint, qwenEffectiveModel, qwenVideoFrameCount, grokApiKey, grokModel, openRouterApiKey, openRouterModel, hasValidConfig, updateFile, geminiApiKey, geminiModel]);
+
+  const handleSelectionChange = useCallback((id: string, isSelected: boolean, shiftKey: boolean) => {
+    setMediaFiles(prev => {
+      const files = prev || [];
+      const currentIndex = files.findIndex(f => f.id === id);
+      if (currentIndex === -1) return files;
+
+      if (shiftKey && lastSelectedIndex !== null) {
+        const start = Math.min(lastSelectedIndex, currentIndex);
+        const end = Math.max(lastSelectedIndex, currentIndex);
+        return files.map((f, idx) => {
+          if (idx >= start && idx <= end) {
+            return { ...f, isSelected };
+          }
+          return f;
+        });
+      } else {
+        return files.map(f => (f.id === id ? { ...f, isSelected } : f));
+      }
+    });
+    setLastSelectedIndex(mediaFiles.findIndex(f => f.id === id));
+  }, [mediaFiles, lastSelectedIndex]);
 
   const handleGenerateCaption = useCallback(async (id: string, itemInstructions?: string) => {
     const fileToProcess = (mediaFiles || []).find(mf => mf.id === id);
@@ -236,19 +313,29 @@ const App: React.FC = () => {
     const combinedInstructions = `${bulkGenerationInstructions}\n\n${itemInstructions || ''}`.trim();
 
     try {
-      const caption = apiProvider === 'gemini'
-        ? await generateCaption(fileToProcess.file, triggerWord, combinedInstructions, isCharacterTaggingEnabled, characterShowName, abortControllerRef.current.signal, geminiApiKey, geminiModel)
-        : await generateCaptionQwen('', qwenEndpoint, qwenEffectiveModel, fileToProcess.file, triggerWord, combinedInstructions, isCharacterTaggingEnabled, characterShowName, qwenVideoFrameCount, abortControllerRef.current.signal);
+      let caption = '';
+      if (apiProvider === 'gemini') {
+          caption = await generateCaption(fileToProcess.file, triggerWord, combinedInstructions, isCharacterTaggingEnabled, characterShowName, abortControllerRef.current.signal, geminiApiKey, geminiModel);
+      } else if (apiProvider === 'grok') {
+          caption = await generateCaptionGrok(grokApiKey, grokModel, fileToProcess.file, triggerWord, combinedInstructions, isCharacterTaggingEnabled, characterShowName, qwenVideoFrameCount, abortControllerRef.current.signal);
+      } else if (apiProvider === 'openrouter') {
+          caption = await generateCaptionOpenRouter(openRouterApiKey, openRouterModel, fileToProcess.file, triggerWord, combinedInstructions, isCharacterTaggingEnabled, characterShowName, qwenVideoFrameCount, openRouterMaxTokens, openRouterTemperature, openRouterUseFullVideo, abortControllerRef.current.signal);
+          console.log(`Caption received for ${id}:`, caption);
+      } else {
+          caption = await generateCaptionQwen('', qwenEndpoint, qwenEffectiveModel, fileToProcess.file, triggerWord, combinedInstructions, isCharacterTaggingEnabled, characterShowName, qwenVideoFrameCount, abortControllerRef.current.signal);
+      }
       
+      console.log(`Updating file ${id} to SUCCESS status`);
       updateFile(id, { caption, status: GenerationStatus.SUCCESS });
     } catch (err: any) {
+      console.error(`Error in handleGenerateCaption for ${id}:`, err);
       if (err.name === 'AbortError' || err.message === 'AbortError') {
           updateFile(id, { status: GenerationStatus.IDLE, errorMessage: "Stopped by user" });
       } else {
           updateFile(id, { status: GenerationStatus.ERROR, errorMessage: err.message });
       }
     }
-  }, [mediaFiles, triggerWord, apiProvider, qwenEndpoint, qwenEffectiveModel, qwenVideoFrameCount, bulkGenerationInstructions, isCharacterTaggingEnabled, characterShowName, hasValidConfig, updateFile, geminiApiKey, geminiModel]);
+  }, [mediaFiles, triggerWord, apiProvider, qwenEndpoint, qwenEffectiveModel, qwenVideoFrameCount, grokApiKey, grokModel, openRouterApiKey, openRouterModel, openRouterMaxTokens, openRouterTemperature, openRouterUseFullVideo, bulkGenerationInstructions, isCharacterTaggingEnabled, characterShowName, hasValidConfig, updateFile, geminiApiKey, geminiModel]);
 
   const handleRefineCaptionItem = useCallback(async (id: string, itemInstructions?: string) => {
     const fileToProcess = (mediaFiles || []).find(mf => mf.id === id);
@@ -259,9 +346,16 @@ const App: React.FC = () => {
     const combinedInstructions = `${bulkRefinementInstructions}\n\n${itemInstructions || ''}`.trim();
 
     try {
-      const caption = apiProvider === 'gemini'
-        ? await refineCaption(fileToProcess.file, fileToProcess.caption, combinedInstructions, abortControllerRef.current.signal, geminiApiKey, geminiModel)
-        : await refineCaptionQwen('', qwenEndpoint, qwenEffectiveModel, fileToProcess.file, fileToProcess.caption, combinedInstructions, qwenVideoFrameCount, abortControllerRef.current.signal);
+      let caption = '';
+      if (apiProvider === 'gemini') {
+          caption = await refineCaption(fileToProcess.file, fileToProcess.caption, combinedInstructions, abortControllerRef.current.signal, geminiApiKey, geminiModel);
+      } else if (apiProvider === 'grok') {
+          caption = await refineCaptionGrok(grokApiKey, grokModel, fileToProcess.file, fileToProcess.caption, combinedInstructions, qwenVideoFrameCount, abortControllerRef.current.signal);
+      } else if (apiProvider === 'openrouter') {
+          caption = await refineCaptionOpenRouter(openRouterApiKey, openRouterModel, fileToProcess.file, fileToProcess.caption, combinedInstructions, qwenVideoFrameCount, openRouterMaxTokens, openRouterTemperature, openRouterUseFullVideo, abortControllerRef.current.signal);
+      } else {
+          caption = await refineCaptionQwen('', qwenEndpoint, qwenEffectiveModel, fileToProcess.file, fileToProcess.caption, combinedInstructions, qwenVideoFrameCount, abortControllerRef.current.signal);
+      }
       
       updateFile(id, { caption, status: GenerationStatus.SUCCESS });
     } catch (err: any) {
@@ -271,14 +365,15 @@ const App: React.FC = () => {
           updateFile(id, { status: GenerationStatus.ERROR, errorMessage: err.message });
       }
     }
-  }, [mediaFiles, apiProvider, qwenEndpoint, qwenEffectiveModel, qwenVideoFrameCount, bulkRefinementInstructions, hasValidConfig, updateFile, geminiApiKey, geminiModel]);
+  }, [mediaFiles, apiProvider, qwenEndpoint, qwenEffectiveModel, qwenVideoFrameCount, grokApiKey, grokModel, openRouterApiKey, openRouterModel, openRouterMaxTokens, bulkRefinementInstructions, hasValidConfig, updateFile, geminiApiKey, geminiModel]);
 
   // --- QUEUE CONTROLLER ---
   const runTasksInQueue = async (tasks: (() => Promise<void>)[]) => {
+    const signal = abortControllerRef.current.signal;
     setIsQueueRunning(true);
     const pool = new Set<Promise<void>>();
     for (const task of tasks) {
-      if (abortControllerRef.current.signal.aborted) break;
+      if (signal.aborted) break;
       const promise = task();
       pool.add(promise);
       promise.finally(() => pool.delete(promise));
@@ -291,6 +386,9 @@ const App: React.FC = () => {
   };
 
   const handleBulkGenerate = () => {
+    if (abortControllerRef.current.signal.aborted) {
+      abortControllerRef.current = new AbortController();
+    }
     const tasks = selectedFiles.map(file => () => handleGenerateCaption(file.id, file.customInstructions));
     if (useRequestQueue) {
       runTasksInQueue(tasks);
@@ -300,6 +398,9 @@ const App: React.FC = () => {
   };
 
   const handleBulkRefine = () => {
+    if (abortControllerRef.current.signal.aborted) {
+      abortControllerRef.current = new AbortController();
+    }
     const tasks = selectedFiles.map(file => () => handleRefineCaptionItem(file.id, file.customInstructions));
     if (useRequestQueue) {
       runTasksInQueue(tasks);
@@ -309,6 +410,9 @@ const App: React.FC = () => {
   };
 
   const handleBulkQualityCheck = () => {
+    if (abortControllerRef.current.signal.aborted) {
+      abortControllerRef.current = new AbortController();
+    }
     const tasks = selectedFiles.map(file => () => handleCheckQuality(file.id));
     if (useRequestQueue) {
       runTasksInQueue(tasks);
@@ -348,11 +452,11 @@ const App: React.FC = () => {
       const remaining = (prev || []).filter(mf => !mf.isSelected);
       return remaining || [];
     });
+    setLastSelectedIndex(null);
   }, []);
 
   const handleStopTasks = () => {
     abortControllerRef.current.abort();
-    abortControllerRef.current = new AbortController();
     setIsQueueRunning(false);
     setMediaFiles(prev => (prev || []).map(mf => {
       if (mf.status === GenerationStatus.GENERATING || mf.status === GenerationStatus.CHECKING) {
@@ -407,9 +511,24 @@ const App: React.FC = () => {
   const downloadQwenSetupScript = () => {
     const isWin = qwenOsType === 'windows';
     const content = isWin 
-      ? `@echo off\npython -m venv venv\ncall venv\\Scripts\\activate\npip install vllm bitsandbytes\necho Setup Complete.`
+      ? `@echo off\nSETLOCAL EnableDelayedExpansion\necho [LoRA Caption Assistant] Starting Local Qwen Setup for Windows...\n\n:: Check for Python\npython --version >nul 2>&1\nif %errorlevel% neq 0 (\n    echo [ERROR] Python not found! Please install Python 3.10+ from python.org\n    pause\n    exit /b\n)\n\necho [1/3] Creating Virtual Environment...\npython -m venv venv\nif %errorlevel% neq 0 (\n    echo [ERROR] Failed to create venv.\n    pause\n    exit /b\n)\n\necho [2/3] Activating Environment and Upgrading Pip...\ncall venv\\Scripts\\activate\npython -m pip install --upgrade pip\n\necho [3/3] Installing vLLM and Dependencies...\necho vLLM natively on Windows is Experimental. Using WSL2 is highly recommended.\necho Attempting installation of bitsandbytes and requirements...\npip install bitsandbytes requests\n:: Note: Users often need specific wheels for vLLM on Windows or WSL2.\necho To run vLLM on Windows, please follow the official guide for WSL2.\necho This script sets up the local Python environment for bridging.\npause`
       : `#!/bin/bash\npython3 -m venv venv\nsource venv/bin/activate\npip install vllm bitsandbytes\necho Setup Complete.`;
     const filename = isWin ? 'setup_qwen.bat' : 'setup_qwen.sh';
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadBridgeSetupScript = () => {
+    const isWin = bridgeOsType === 'windows';
+    const content = isWin 
+      ? `@echo off\nSETLOCAL EnableDelayedExpansion\necho [LoRA Caption Assistant] Starting Secure Bridge Setup for Windows...\n\n:: Check for Python\npython --version >nul 2>&1\nif %errorlevel% neq 0 (\n    echo [ERROR] Python not found! Please install Python 3.10+ from python.org\n    pause\n    exit /b\n)\n\necho [1/3] Creating Virtual Environment...\npython -m venv venv\nif %errorlevel% neq 0 (\n    echo [ERROR] Failed to create venv.\n    pause\n    exit /b\n)\n\necho [2/3] Activating Environment...\ncall venv\\Scripts\\activate\n\necho [3/3] Installing Bridge Dependencies...\npip install flask flask-cors requests\nif %errorlevel% neq 0 (\n    echo [ERROR] Installation failed.\n    pause\n    exit /b\n)\n\necho Bridge Setup Complete. You can now download bridge.py and run it using the command shown in the app.\npause`
+      : `#!/bin/bash\npython3 -m venv venv\nsource venv/bin/activate\npip install vllm bitsandbytes\necho Setup Complete.`;
+    const filename = isWin ? 'setup_bridge.bat' : 'setup_bridge.sh';
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -493,24 +612,160 @@ const App: React.FC = () => {
                     <div>
                         <label className="text-xs font-black text-gray-500 uppercase tracking-widest block mb-4">AI Provider</label>
                         <div className="flex p-1.5 bg-black rounded-2xl border border-gray-800 shadow-inner">
-                            <button onClick={() => setApiProvider('gemini')} className={`flex-1 py-3 text-xs font-black uppercase rounded-xl transition-all ${apiProvider === 'gemini' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>Google Gemini</button>
-                            <button onClick={() => setApiProvider('qwen')} className={`flex-1 py-3 text-xs font-black uppercase rounded-xl transition-all ${apiProvider === 'qwen' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>Local Qwen (GPU)</button>
+                            <button onClick={() => setApiProvider('gemini')} className={`flex-1 py-3 text-[10px] font-black uppercase rounded-xl transition-all ${apiProvider === 'gemini' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>Google Gemini</button>
+                            <button onClick={() => setApiProvider('grok')} className={`flex-1 py-3 text-[10px] font-black uppercase rounded-xl transition-all ${apiProvider === 'grok' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>xAI Grok</button>
+                            <button onClick={() => setApiProvider('qwen')} className={`flex-1 py-3 text-[10px] font-black uppercase rounded-xl transition-all ${apiProvider === 'qwen' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>Local Qwen</button>
+                            <button onClick={() => setApiProvider('openrouter')} className={`flex-1 py-3 text-[10px] font-black uppercase rounded-xl transition-all ${apiProvider === 'openrouter' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>OpenRouter</button>
                         </div>
                     </div>
 
-                    {apiProvider === 'gemini' ? (
+                    {apiProvider === 'openrouter' && (
+                        <div className="bg-blue-500/5 border border-blue-500/20 p-6 rounded-3xl space-y-6 animate-slide-down shadow-xl">
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest">OpenRouter Model / URL</label>
+                                </div>
+                                <div className="space-y-2">
+                                    <select 
+                                        value={OPENROUTER_MODELS.some(m => m.id === openRouterModel) ? openRouterModel : 'custom'} 
+                                        onChange={(e) => {
+                                            if (e.target.value === 'custom') {
+                                                setOpenRouterModel('');
+                                            } else {
+                                                setOpenRouterModel(e.target.value);
+                                            }
+                                        }}
+                                        className="w-full p-3 bg-black border border-blue-500/30 rounded-xl text-xs font-bold text-gray-300 shadow-inner focus:ring-1 focus:ring-blue-500 outline-none"
+                                    >
+                                        {OPENROUTER_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                        <option value="custom">Custom Model ID / URL</option>
+                                    </select>
+                                    {!OPENROUTER_MODELS.some(m => m.id === openRouterModel) && (
+                                        <input 
+                                            type="text" 
+                                            value={openRouterModel} 
+                                            onChange={(e) => setOpenRouterModel(e.target.value)}
+                                            placeholder="e.g. anthropic/claude-3-opus or https://openrouter.ai/..."
+                                            className="w-full p-3 bg-black border border-blue-500/30 rounded-xl text-xs font-mono text-gray-300 shadow-inner focus:ring-1 focus:ring-blue-500 outline-none"
+                                        />
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest">OpenRouter API Key</label>
+                                        {openRouterApiKey && <span className="flex items-center gap-1.5 text-[9px] font-black uppercase text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full"><CheckCircleIcon className="w-3 h-3"/> Configured</span>}
+                                    </div>
+                                    <div className="relative group">
+                                        <input 
+                                            type="password" 
+                                            value={openRouterApiKey} 
+                                            onChange={(e) => setOpenRouterApiKey(e.target.value)}
+                                            placeholder="sk-or-v1-..."
+                                            className="w-full py-4 px-5 bg-black border border-blue-500/30 rounded-2xl text-xs font-mono shadow-inner focus:ring-1 focus:ring-blue-500 outline-none hover:border-blue-500/60 transition-all"
+                                        />
+                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-blue-400/50 group-hover:text-blue-400 transition-colors">
+                                            <SparklesIcon className="w-5 h-5" />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Max Tokens</label>
+                                        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{openRouterMaxTokens}</span>
+                                    </div>
+                                    <div className="relative group">
+                                        <input 
+                                            type="number" 
+                                            value={openRouterMaxTokens} 
+                                            onChange={(e) => setOpenRouterMaxTokens(parseInt(e.target.value) || 4096)}
+                                            min="1"
+                                            max="32768"
+                                            className="w-full py-4 px-5 bg-black border border-blue-500/30 rounded-2xl text-xs font-mono shadow-inner focus:ring-1 focus:ring-blue-500 outline-none hover:border-blue-500/60 transition-all"
+                                        />
+                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-blue-400/50 group-hover:text-blue-400 transition-colors">
+                                            <WandIcon className="w-5 h-5" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Temperature</label>
+                                        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{openRouterTemperature}</span>
+                                    </div>
+                                    <div className="relative group">
+                                        <input 
+                                            type="range" 
+                                            min="0" 
+                                            max="2" 
+                                            step="0.1"
+                                            value={openRouterTemperature} 
+                                            onChange={(e) => setOpenRouterTemperature(parseFloat(e.target.value))}
+                                            className="w-full h-2 bg-black border border-blue-500/30 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Video Mode</label>
+                                    </div>
+                                    <button 
+                                        onClick={() => setOpenRouterUseFullVideo(!openRouterUseFullVideo)}
+                                        className={`w-full py-4 px-5 border rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-between ${openRouterUseFullVideo ? 'bg-blue-500/20 border-blue-500 text-blue-400' : 'bg-black border-blue-500/30 text-gray-500 hover:border-blue-500/60'}`}
+                                    >
+                                        {openRouterUseFullVideo ? 'Full Video File' : '8 Frames (Snapshots)'}
+                                        <div className={`w-8 h-4 rounded-full relative transition-colors ${openRouterUseFullVideo ? 'bg-blue-500' : 'bg-gray-700'}`}>
+                                            <div className={`absolute top-1 w-2 h-2 bg-white rounded-full transition-all ${openRouterUseFullVideo ? 'right-1' : 'left-1'}`} />
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+                            <p className="text-[10px] text-gray-500 flex items-center gap-1.5 px-1">
+                                <AlertTriangleIcon className="w-3 h-3 text-blue-400" />
+                                Get an API key from 
+                                <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline font-bold">OpenRouter Keys</a>
+                            </p>
+                        </div>
+                    )}
+
+                    {apiProvider === 'gemini' && (
                         <div className="bg-indigo-500/5 border border-indigo-500/20 p-6 rounded-3xl space-y-6 animate-slide-down shadow-xl">
                             <div className="space-y-4">
                                 <div className="flex justify-between items-center">
                                     <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Gemini Model Version</label>
                                 </div>
-                                <select 
-                                    value={geminiModel} 
-                                    onChange={(e) => setGeminiModel(e.target.value)}
-                                    className="w-full p-3 bg-black border border-indigo-500/30 rounded-xl text-xs font-bold text-gray-300 shadow-inner focus:ring-1 focus:ring-indigo-500 outline-none"
-                                >
-                                    {GEMINI_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                </select>
+                                <div className="space-y-2">
+                                    <select 
+                                        value={GEMINI_MODELS.some(m => m.id === geminiModel) ? geminiModel : 'custom'} 
+                                        onChange={(e) => {
+                                            if (e.target.value === 'custom') {
+                                                setGeminiModel('');
+                                            } else {
+                                                setGeminiModel(e.target.value);
+                                            }
+                                        }}
+                                        className="w-full p-3 bg-black border border-indigo-500/30 rounded-xl text-xs font-bold text-gray-300 shadow-inner focus:ring-1 focus:ring-indigo-500 outline-none"
+                                    >
+                                        {GEMINI_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                        <option value="custom">Custom Model ID</option>
+                                    </select>
+                                    {!GEMINI_MODELS.some(m => m.id === geminiModel) && (
+                                        <input 
+                                            type="text" 
+                                            value={geminiModel} 
+                                            onChange={(e) => setGeminiModel(e.target.value)}
+                                            placeholder="e.g. gemini-2.0-flash-exp"
+                                            className="w-full p-3 bg-black border border-indigo-500/30 rounded-xl text-xs font-mono text-gray-300 shadow-inner focus:ring-1 focus:ring-indigo-500 outline-none"
+                                        />
+                                    )}
+                                </div>
                             </div>
 
                             <div className="space-y-4">
@@ -537,7 +792,50 @@ const App: React.FC = () => {
                                 <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline font-bold">Google AI Studio</a>
                             </p>
                         </div>
-                    ) : (
+                    )}
+
+                    {apiProvider === 'grok' && (
+                        <div className="bg-orange-500/5 border border-orange-500/20 p-6 rounded-3xl space-y-6 animate-slide-down shadow-xl">
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <label className="text-[10px] font-black text-orange-400 uppercase tracking-widest">Grok Model Version</label>
+                                </div>
+                                <select 
+                                    value={grokModel} 
+                                    onChange={(e) => setGrokModel(e.target.value)}
+                                    className="w-full p-3 bg-black border border-orange-500/30 rounded-xl text-xs font-bold text-gray-300 shadow-inner focus:ring-1 focus:ring-orange-500 outline-none"
+                                >
+                                    {GROK_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                </select>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <label className="text-[10px] font-black text-orange-400 uppercase tracking-widest">xAI API Key</label>
+                                    {grokApiKey && <span className="flex items-center gap-1.5 text-[9px] font-black uppercase text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full"><CheckCircleIcon className="w-3 h-3"/> Configured</span>}
+                                </div>
+                                <div className="relative group">
+                                    <input 
+                                        type="password" 
+                                        value={grokApiKey} 
+                                        onChange={(e) => setGrokApiKey(e.target.value)}
+                                        placeholder="Enter your xAI Grok API key here..."
+                                        className="w-full py-4 px-5 bg-black border border-orange-500/30 rounded-2xl text-xs font-mono shadow-inner focus:ring-1 focus:ring-orange-500 outline-none hover:border-orange-500/60 transition-all"
+                                    />
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-orange-400/50 group-hover:text-orange-400 transition-colors">
+                                        <SparklesIcon className="w-5 h-5" />
+                                    </div>
+                                </div>
+                            </div>
+                            <p className="text-[10px] text-gray-500 flex items-center gap-1.5 px-1">
+                                <AlertTriangleIcon className="w-3 h-3 text-orange-400" />
+                                Get an API key from 
+                                <a href="https://console.x.ai/" target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:underline font-bold">xAI Console</a>
+                            </p>
+                        </div>
+                    )}
+
+                    {apiProvider === 'qwen' && (
                         <div className="bg-gray-950 p-6 rounded-3xl border border-gray-800 space-y-6 animate-slide-down shadow-xl">
                             <div className="flex justify-between items-center mb-2">
                                 <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Local Model Configuration</label>
@@ -563,7 +861,7 @@ const App: React.FC = () => {
                                 </div>
                                 <div className="space-y-1">
                                     <label className="text-[9px] font-black text-gray-700 uppercase">Virtual Model Name (Served Name)</label>
-                                    <input type="text" value={virtualModelName} onChange={e => setVirtualModelName(e.target.value)} placeholder="org/model-id..." className="w-full p-2.5 bg-black border border-gray-800 rounded-xl text-xs font-mono shadow-inner" />
+                                    <input type="text" value={virtualModelName} onChange={e => setVirtualModelName(e.target.value)} placeholder="org/model-id..." className="w-full p-3 bg-black border border-gray-800 rounded-xl text-xs font-mono shadow-inner" />
                                 </div>
                               </div>
                             ) : useCustomQwenModel ? (
@@ -605,7 +903,7 @@ const App: React.FC = () => {
                                     </label>
                                 </div>
 
-                                <button onClick={downloadQwenSetupScript} className="w-full py-3 bg-green-700 hover:bg-green-600 text-white text-[10px] font-black uppercase rounded-xl transition-all shadow-lg">Download Setup Script</button>
+                                <button onClick={downloadQwenSetupScript} className="w-full py-3 bg-green-700 hover:bg-green-600 text-white text-[10px] font-black uppercase rounded-xl transition-all shadow-lg">Download {qwenOsType === 'windows' ? 'setup_qwen.bat' : 'setup_qwen.sh'}</button>
 
                                 <div className="space-y-2">
                                     <label className="text-[9px] font-black text-gray-700 uppercase">Local Start Command:</label>
@@ -763,6 +1061,7 @@ const App: React.FC = () => {
                                                     <span className="text-[10px] font-bold text-gray-500 group-hover:text-gray-300">First-time Setup (Include VENV & Pip Install)</span>
                                                 </label>
                                                 <div className="flex gap-4">
+                                                    <button onClick={downloadBridgeSetupScript} className="flex-1 py-3 bg-indigo-700 hover:bg-indigo-600 text-white text-[10px] font-black uppercase rounded-xl transition-all shadow-lg">Download {bridgeOsType === 'windows' ? 'setup_bridge.bat' : 'setup_bridge.sh'}</button>
                                                     <button onClick={downloadBridgeScript} className="flex-1 py-3 bg-orange-700 hover:bg-orange-600 text-white text-[10px] font-black uppercase rounded-xl transition-all shadow-lg">Download Bridge.py</button>
                                                 </div>
                                             </div>
@@ -861,7 +1160,7 @@ const App: React.FC = () => {
                     onPreview={handleComfyPreview} 
                     onCaptionChange={(id, cap) => updateFile(id, { caption: cap })} 
                     onCustomInstructionsChange={(id, ins) => updateFile(id, { customInstructions: ins })} 
-                    onSelectionChange={(id, sel) => updateFile(id, { isSelected: sel })} 
+                    onSelectionChange={handleSelectionChange} 
                     onOpenPreviewModal={setActivePreviewId} 
                   />
                 ))}

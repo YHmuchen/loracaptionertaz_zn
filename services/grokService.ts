@@ -1,6 +1,6 @@
+
 /**
- * Service for interacting with Qwen-VL via OpenAI-compatible endpoints.
- * This supports OpenRouter, Ollama, vLLM, etc.
+ * Service for interacting with xAI Grok via OpenAI-compatible vision endpoints.
  */
 
 const fileToBase64 = (file: File): Promise<string> => {
@@ -9,7 +9,7 @@ const fileToBase64 = (file: File): Promise<string> => {
     reader.readAsDataURL(file);
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        resolve(reader.result); // This includes the data:image/png;base64, prefix
+        resolve(reader.result);
       } else {
         reject(new Error('Failed to convert file to base64'));
       }
@@ -54,7 +54,7 @@ const extractFramesFromVideo = async (videoFile: File, numberOfFrames: number): 
                         frameResolve();
                     };
                     video.addEventListener('seeked', onSeeked);
-                    video.currentTime = time;
+                    video.currentTime = Math.min(time, duration - 0.1);
                 });
                 ctx.drawImage(video, 0, 0);
                 frames.push(canvas.toDataURL('image/jpeg', 0.8));
@@ -101,9 +101,8 @@ const constructPrompt = (
   return basePrompt;
 };
 
-export const generateCaptionQwen = async (
+export const generateCaptionGrok = async (
   apiKey: string,
-  baseUrl: string,
   model: string,
   file: File,
   triggerWord: string,
@@ -113,99 +112,173 @@ export const generateCaptionQwen = async (
   videoFrameCount: number = 8,
   signal?: AbortSignal
 ): Promise<string> => {
-  if (!baseUrl) throw new Error("Local Endpoint URL is required for Qwen.");
-  let endpoint = baseUrl;
-  if (!endpoint.includes('/chat/completions')) {
-      endpoint = endpoint.replace(/\/+$/, '') + '/chat/completions';
-  }
+  if (!apiKey) throw new Error("xAI API Key is required for Grok.");
+  const endpoint = 'https://api.x.ai/v1/chat/completions';
   const prompt = constructPrompt(triggerWord, customInstructions, isCharacterTaggingEnabled, characterShowName);
+  
   let contentParts: any[] = [{ type: "text", text: prompt }];
   if (file.type.startsWith('video/')) {
-    const frames = await extractFramesFromVideo(file, videoFrameCount);
-    frames.forEach(frame => contentParts.push({ type: "image_url", image_url: { url: frame } }));
+    if (model === 'grok-imagine-video') {
+      const base64Video = await fileToBase64(file);
+      contentParts.push({ type: "image_url", image_url: { url: base64Video } });
+    } else {
+      const frames = await extractFramesFromVideo(file, videoFrameCount);
+      frames.forEach(frame => contentParts.push({ type: "image_url", image_url: { url: frame } }));
+    }
   } else {
     const base64Image = await fileToBase64(file);
     contentParts.push({ type: "image_url", image_url: { url: base64Image } });
   }
+
   const payload = {
-    model: model || 'Qwen/Qwen2.5-VL-7B-Instruct',
+    model: model || 'grok-2-vision-1212',
     messages: [{ role: "user", content: contentParts }],
     max_tokens: 1000,
     temperature: 0.2
   };
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  const response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(payload), signal });
-  if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(payload),
+    signal
+  });
+
+  if (!response.ok) {
+    let errorMessage = response.statusText;
+    try {
+      const errData = await response.json();
+      errorMessage = errData.error?.message || errData.message || JSON.stringify(errData) || errorMessage;
+    } catch (e) {
+      // If not JSON, try text
+      const errText = await response.text().catch(() => "");
+      if (errText) errorMessage = errText;
+    }
+    throw new Error(`Grok API Error (${response.status}): ${errorMessage}`);
+  }
+
   const data = await response.json();
   return data.choices?.[0]?.message?.content?.trim() || "";
 };
 
-export const refineCaptionQwen = async (
+export const refineCaptionGrok = async (
   apiKey: string,
-  baseUrl: string,
   model: string,
   file: File,
   currentCaption: string,
   refinementInstructions: string,
-  videoFrameCount: number = 8,
+  videoFrameCount: number = 4,
   signal?: AbortSignal
 ): Promise<string> => {
-  let endpoint = baseUrl;
-  if (!endpoint.includes('/chat/completions')) endpoint = endpoint.replace(/\/+$/, '') + '/chat/completions';
+  if (!apiKey) throw new Error("xAI API Key is required for Grok.");
+  const endpoint = 'https://api.x.ai/v1/chat/completions';
   const prompt = `Refine the following caption based on the visual information and the instructions. Output ONLY the refined text.
 CURRENT CAPTION: "${currentCaption}"
 INSTRUCTIONS: "${refinementInstructions}"`;
+
   let contentParts: any[] = [{ type: "text", text: prompt }];
   if (file.type.startsWith('video/')) {
-    const frames = await extractFramesFromVideo(file, videoFrameCount);
-    frames.forEach(frame => contentParts.push({ type: "image_url", image_url: { url: frame } }));
+    if (model === 'grok-imagine-video') {
+      const base64Video = await fileToBase64(file);
+      contentParts.push({ type: "image_url", image_url: { url: base64Video } });
+    } else {
+      const frames = await extractFramesFromVideo(file, videoFrameCount);
+      frames.forEach(frame => contentParts.push({ type: "image_url", image_url: { url: frame } }));
+    }
   } else {
     const base64Image = await fileToBase64(file);
     contentParts.push({ type: "image_url", image_url: { url: base64Image } });
   }
+
   const payload = {
-    model: model || 'Qwen/Qwen2.5-VL-7B-Instruct',
+    model: model || 'grok-2-vision-1212',
     messages: [{ role: "user", content: contentParts }],
     max_tokens: 1000,
     temperature: 0.2
   };
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  const response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(payload), signal });
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(payload),
+    signal
+  });
+
+  if (!response.ok) {
+    let errorMessage = response.statusText;
+    try {
+      const errData = await response.json();
+      errorMessage = errData.error?.message || errData.message || JSON.stringify(errData) || errorMessage;
+    } catch (e) {
+      const errText = await response.text().catch(() => "");
+      if (errText) errorMessage = errText;
+    }
+    throw new Error(`Grok API Error (${response.status}): ${errorMessage}`);
+  }
   const data = await response.json();
   return data.choices?.[0]?.message?.content?.trim() || "";
 };
 
-export const checkQualityQwen = async (
+export const checkQualityGrok = async (
   apiKey: string,
-  baseUrl: string,
   model: string,
   file: File,
   caption: string,
-  videoFrameCount: number = 8,
+  videoFrameCount: number = 4,
   signal?: AbortSignal
 ): Promise<number> => {
-  let endpoint = baseUrl;
-  if (!endpoint.includes('/chat/completions')) endpoint = endpoint.replace(/\/+$/, '') + '/chat/completions';
+  if (!apiKey) throw new Error("xAI API Key is required for Grok.");
+  const endpoint = 'https://api.x.ai/v1/chat/completions';
   const prompt = `Evaluate the caption quality. Respond with ONLY an integer from 1 to 5.\nCaption: "${caption}"`;
+
   let contentParts: any[] = [{ type: "text", text: prompt }];
   if (file.type.startsWith('video/')) {
-    const frames = await extractFramesFromVideo(file, videoFrameCount);
-    frames.forEach(frame => contentParts.push({ type: "image_url", image_url: { url: frame } }));
+    if (model === 'grok-imagine-video') {
+      const base64Video = await fileToBase64(file);
+      contentParts.push({ type: "image_url", image_url: { url: base64Video } });
+    } else {
+      const frames = await extractFramesFromVideo(file, videoFrameCount);
+      frames.forEach(frame => contentParts.push({ type: "image_url", image_url: { url: frame } }));
+    }
   } else {
     const base64Image = await fileToBase64(file);
     contentParts.push({ type: "image_url", image_url: { url: base64Image } });
   }
+
   const payload = {
-    model: model || 'Qwen/Qwen2.5-VL-7B-Instruct',
+    model: model || 'grok-2-vision-1212',
     messages: [{ role: "user", content: contentParts }],
     max_tokens: 10,
     temperature: 0.1
   };
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  const response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(payload), signal });
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(payload),
+    signal
+  });
+
+  if (!response.ok) {
+    let errorMessage = response.statusText;
+    try {
+      const errData = await response.json();
+      errorMessage = errData.error?.message || errData.message || JSON.stringify(errData) || errorMessage;
+    } catch (e) {
+      const errText = await response.text().catch(() => "");
+      if (errText) errorMessage = errText;
+    }
+    throw new Error(`Grok API Error (${response.status}): ${errorMessage}`);
+  }
   const data = await response.json();
   const text = data.choices?.[0]?.message?.content?.trim();
   return parseInt(text?.match(/\d+/)?.[0] || '0', 10);

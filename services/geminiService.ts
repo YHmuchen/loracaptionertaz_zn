@@ -26,13 +26,26 @@ const withRetry = async <T>(
   }
 };
 
-const fileToGenerativePart = async (file: File) => {
-  const base64EncodedDataPromise = new Promise<string>((resolve) => {
+const fileToGenerativePart = async (file: File, signal?: AbortSignal) => {
+  const base64EncodedDataPromise = new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
+    const onAbort = () => {
+        reader.abort();
+        reject(new Error("AbortError"));
+    };
+    if (signal) signal.addEventListener('abort', onAbort);
+
     reader.onloadend = () => {
+      if (signal) signal.removeEventListener('abort', onAbort);
       if (typeof reader.result === 'string') {
         resolve(reader.result.split(',')[1]);
+      } else {
+        reject(new Error("Failed to read file"));
       }
+    };
+    reader.onerror = () => {
+        if (signal) signal.removeEventListener('abort', onAbort);
+        reject(new Error("FileReader error"));
     };
     reader.readAsDataURL(file);
   });
@@ -72,13 +85,13 @@ export const generateCaption = async (
   characterShowName?: string,
   signal?: AbortSignal,
   apiKeyOverride?: string,
-  model: string = 'gemini-3-pro-preview'
+  model: string = 'gemini-3.1-pro-preview'
 ): Promise<string> => {
-  const apiKey = apiKeyOverride || process.env.API_KEY;
+  const apiKey = apiKeyOverride || process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key is missing. Please enter your Gemini API key in the Global Settings.");
 
   const ai = new GoogleGenAI({ apiKey });
-  const imagePart = await fileToGenerativePart(file);
+  const imagePart = await fileToGenerativePart(file, signal);
   const prompt = constructPrompt(triggerWord, customInstructions, isCharacterTaggingEnabled, characterShowName);
 
   const apiCall = () => ai.models.generateContent({
@@ -103,13 +116,13 @@ export const refineCaption = async (
   refinementInstructions: string,
   signal?: AbortSignal,
   apiKeyOverride?: string,
-  model: string = 'gemini-3-pro-preview'
+  model: string = 'gemini-3.1-pro-preview'
 ): Promise<string> => {
-  const apiKey = apiKeyOverride || process.env.API_KEY;
+  const apiKey = apiKeyOverride || process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key is missing.");
 
   const ai = new GoogleGenAI({ apiKey });
-  const imagePart = await fileToGenerativePart(file);
+  const imagePart = await fileToGenerativePart(file, signal);
   const prompt = `You are an expert editor for LoRA training data. 
 Refine the provided caption based on the visual information and the user's refinement instructions. 
 Maintain the continuous paragraph format and ensure the trigger word is preserved.
@@ -139,13 +152,13 @@ export const checkCaptionQuality = async (
   caption: string,
   signal?: AbortSignal,
   apiKeyOverride?: string,
-  model: string = 'gemini-3-pro-preview'
+  model: string = 'gemini-3.1-pro-preview'
 ): Promise<number> => {
-  const apiKey = apiKeyOverride || process.env.API_KEY;
+  const apiKey = apiKeyOverride || process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key is missing.");
 
   const ai = new GoogleGenAI({ apiKey });
-  const imagePart = await fileToGenerativePart(file);
+  const imagePart = await fileToGenerativePart(file, signal);
   const prompt = `Evaluate the following caption for accuracy and detail based on the image. Respond with ONLY an integer from 1 to 5.\nCaption: "${caption}"`;
 
   try {

@@ -14,7 +14,7 @@ interface MediaItemProps {
   onPreview: (id: string) => void;
   onCaptionChange: (id:string, caption: string) => void;
   onCustomInstructionsChange: (id: string, instructions: string) => void;
-  onSelectionChange: (id: string, isSelected: boolean) => void;
+  onSelectionChange: (id: string, isSelected: boolean, shiftKey: boolean) => void;
   onOpenPreviewModal: (id: string) => void;
 }
 
@@ -84,13 +84,20 @@ const MediaItem: React.FC<MediaItemProps> = ({
     );
   };
 
+  const handleCheckboxClick = (e: React.MouseEvent<HTMLInputElement>) => {
+    // We use onClick to capture the shiftKey, but we need to be careful with the checked state
+    // Since it's a controlled component, we toggle the current state
+    onSelectionChange(item.id, !item.isSelected, e.shiftKey);
+  };
+
   return (
     <div className={`bg-gray-800 rounded-lg overflow-hidden border-2 transition-all ${getStatusColor()}`}>
       <div className="relative p-2 space-y-2">
          <input
           type="checkbox"
           checked={item.isSelected}
-          onChange={(e) => onSelectionChange(item.id, e.target.checked)}
+          onClick={handleCheckboxClick}
+          onChange={() => {}} // Controlled component dummy
           className="absolute top-4 left-4 h-6 w-6 bg-gray-900/80 backdrop-blur-sm border-gray-600 text-indigo-500 rounded focus:ring-indigo-600 z-10 cursor-pointer shadow-lg"
         />
         {item.qualityScore !== undefined && (
