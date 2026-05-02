@@ -56,9 +56,38 @@ app_port: 7860
 
 ---
 
-## 🤖 本地 Qwen 设置指南
+## 🦙 本地 llama.cpp 方案（推荐，一键启动）
 
-如果你有性能强劲的 NVIDIA GPU（建议 12GB+ 显存），可以**免费在本地**运行字幕模型，并将此网页应用连接到本地服务。
+使用 llama.cpp 运行量化版 Huihui-Qwen3-VL-8B，比 vLLM 更轻量，无需 Python 环境，显存占用更低。
+
+### 步骤 1：下载模型
+从 Hugging Face 下载 GGUF 格式的模型文件：
+> **模型地址**: [huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated](https://huggingface.co/huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated)
+
+所需文件：
+*   `Huihui-Qwen3-VL-8B-Instruct-abliterated.Q5_K_M.gguf`（模型权重）
+*   `Huihui-Qwen3-VL-8B-Instruct-abliterated.mmproj-Q8_0.gguf`（多模态投影器）
+
+### 步骤 2：配置路径
+编辑 `start_huihui_qwen.bat`，修改以下路径：
+*   `llama-server.exe` 的路径（需下载 [llama.cpp Windows 版](https://github.com/ggerganov/llama.cpp/releases)）
+*   模型 `.gguf` 和 `.mmproj` 文件的存放路径
+
+### 步骤 3：一键启动
+双击运行 `start_huihui_qwen.bat`，脚本将自动：
+1.  在端口 **8001** 启动 llama-server（OpenAI 兼容 API）
+2.  在端口 **7860** 启动前端
+
+### 步骤 4：连接前端
+打开浏览器访问 `http://localhost:7860`：
+*   AI 提供商选择：**本地 Qwen (GPU)**
+*   端点 URL 填写：`http://localhost:8001/v1`
+
+---
+
+## 🤖 本地 Qwen 设置指南（vLLM 方案）
+
+如果你有性能强劲的 NVIDIA GPU（建议 12GB+ 显存），也可以通过 vLLM 运行模型。
 
 ### 环境要求
 *   **操作系统**：Windows 或 Linux
