@@ -9,7 +9,7 @@ app_port: 7860
 ---
 
 > **原项目**: [Hugging Face - comfyuiman/loracaptionertaz](https://huggingface.co/spaces/comfyuiman/loracaptionertaz)
-> **本分支**: 在原项目基础上增加 Grok、OpenRouter 支持，并进行了中文汉化。
+> **本项目**: 仅对原项目进行了中文汉化。
 
 # LoRA Caption Assistant
 
