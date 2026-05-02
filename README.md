@@ -68,17 +68,18 @@ app_port: 7860
 *   `Huihui-Qwen3-VL-8B-Instruct-abliterated.Q5_K_M.gguf`（模型权重）
 *   `Huihui-Qwen3-VL-8B-Instruct-abliterated.mmproj-Q8_0.gguf`（多模态投影器）
 
-### 步骤 2：配置路径
-编辑 `start_huihui_qwen.bat`，修改以下路径：
-*   `llama-server.exe` 的路径（需下载 [llama.cpp Windows 版](https://github.com/ggerganov/llama.cpp/releases)）
-*   模型 `.gguf` 和 `.mmproj` 文件的存放路径
+### 步骤 2：放置模型文件
+将下载的 `.gguf` 和 `.mmproj` 文件放入项目根目录下的 `models/` 文件夹。
 
-### 步骤 3：一键启动
+### 步骤 3：配置 llama-server 路径
+编辑 `start_huihui_qwen.bat`，将 `llama-server.exe` 的路径改为你本机的实际路径（需下载 [llama.cpp Windows 版](https://github.com/ggerganov/llama.cpp/releases)）。
+
+### 步骤 4：一键启动
 双击运行 `start_huihui_qwen.bat`，脚本将自动：
 1.  在端口 **8001** 启动 llama-server（OpenAI 兼容 API）
 2.  在端口 **7860** 启动前端
 
-### 步骤 4：连接前端
+### 步骤 5：连接前端
 打开浏览器访问 `http://localhost:7860`：
 *   AI 提供商选择：**本地 Qwen (GPU)**
 *   端点 URL 填写：`http://localhost:8001/v1`
